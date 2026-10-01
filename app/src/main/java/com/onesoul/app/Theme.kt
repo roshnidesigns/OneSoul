@@ -36,7 +36,7 @@ private val dotSlots = listOf(
     0xFF855AB4, // 21–24
 ).map { Color(it) }
 
-/** "text color for time" from the same grid, used at 80% opacity. */
+/** "text color for time" from the same grid, used at 60% opacity. */
 val TimeText = Color(0xFF222F36)
 
 /** The colour of a person's dot at their local hour. */

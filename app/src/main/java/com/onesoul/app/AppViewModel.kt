@@ -79,6 +79,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         save()
     }
 
+    /** Shaken off the page: gone from today's sheet and the month view. */
+    fun removeStroke(s: Stroke) {
+        if (strokes.remove(s)) save()
+    }
+
     fun songChanged(info: NowPlayingInfo) {
         val last = songs.lastOrNull { it.author == Author.ME }
         if (last?.title == info.title && last.artist == info.artist) return
@@ -115,6 +120,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun partnerHere(at: Long) = at < partnerHereUntil
+
+    /**
+     * Hours (0–23, in that person's own time zone) of their current local day in which they did
+     * anything: opened the app, drew, played a song or sent a snippet.
+     */
+    fun activeHours(who: Author, tz: String, at: Long): Set<Int> {
+        val zone = ZoneId.of(tz)
+        val today = java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
+        val times = presence.filter { it.author == who }.map { it.t } +
+            strokes.filter { it.author == who }.map { it.t } +
+            songs.filter { it.author == who }.map { it.t } +
+            snippets.filter { it.author == who }.map { it.t }
+        return times.mapNotNull { t ->
+            val z = java.time.Instant.ofEpochMilli(t).atZone(zone)
+            if (z.toLocalDate() == today) z.hour else null
+        }.toSet()
+    }
 
     // ---- day wraps --------------------------------------------------------------------------
 

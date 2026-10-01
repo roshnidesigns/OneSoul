@@ -125,8 +125,9 @@ fun HomeScreen(
         // Frame 7317: 24 hour dots, 8 × 8, spread edge to edge with 8dp side padding; rows centred 44dp in.
         val topRow = 44.dp
         val bottomRow = h - 44.dp
-        val first = 12.dp
-        val span = w - 24.dp
+        // Track inset so a dot at either end still has room for its time label centred on it.
+        val first = 32.dp
+        val span = w - 64.dp
         // Centre x of a person's 32dp dot for their local hour (00:00 at the first hour dot, 24:00 at the last).
         val partnerX by animateDpAsState(first + span * (partnerHour / 24f), tween(1200), label = "partnerX")
         val myX by animateDpAsState(first + span * (myHour / 24f), tween(1200), label = "myX")
@@ -134,20 +135,20 @@ fun HomeScreen(
         // Each person's sky: a large disc set off from their dot, filled with an angled fade
         // (colour on the dot's side → clear), as in the Figma frame. Not clipped, so it runs under the bars.
         Canvas(Modifier.fillMaxSize()) {
-            sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor, towardsBottom = true, BlendMode.Multiply)
-            sky(Offset(myX.toPx(), bottomRow.toPx()), myColor, towardsBottom = false, BlendMode.Multiply)
+            sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor, towardsBottom = true)
+            sky(Offset(myX.toPx(), bottomRow.toPx()), myColor, towardsBottom = false)
             if (strength > 0f) drawRect(Brush.radialGradient(
                 listOf(bpmColor(bpm).copy(alpha = strength * (0.2f + 0.3f * pulse)), Color.Transparent),
                 radius = size.maxDimension * (0.45f + 0.1f * pulse),
             ))
         }
 
-        // The shared scribble space is a big canvas behind the fixed time tracks (see ScribbleSpace).
-        ScribbleSpace(vm, myColor, onDays)
+        // The shared scribble space: the whole month on one canvas behind the fixed time tracks (see ScribbleSpace).
+        ScribbleSpace(vm, myColor, now)
 
         // Hour dots sit at the back of the time track: above the sky, beneath the person dots and labels.
-        HourDots(topRow - 4.dp)
-        HourDots(bottomRow - 4.dp)
+        HourDots(topRow - 4.dp, vm.activeHours(Author.PARTNER, p.partnerTz, now))
+        HourDots(bottomRow - 4.dp, vm.activeHours(Author.ME, vm.myTz, now))
 
         // Group 33 (them, top) and Group 32 (you, bottom): 32dp glowing dots that travel the 24 hours
         DayDot(partnerX - 16.dp, topRow - 16.dp, partnerColor, together, pulse)
@@ -182,7 +183,8 @@ private fun DrawScope.sky(dot: Offset, color: Color, towardsBottom: Boolean, ble
     val dir = c - dot
     drawCircle(
         Brush.linearGradient(
-            0f to color, 0.55f to color.copy(alpha = 0.25f), 1f to Color.White.copy(alpha = 0f),
+            // Linear, stop 0% = dot colour at 80% opacity, stop 80% = #FFFFFF at 0% (clear beyond).
+            0f to color.copy(alpha = 0.8f), 0.8f to Color.White.copy(alpha = 0f),
             start = dot - dir * 0.6f,
             end = c + dir * 0.3f,
         ),
@@ -206,20 +208,24 @@ internal const val SQUIGGLE = "M1.49996 30.4312C1.87778 29.832 9.9138 24.812 15.
 @Composable
 private fun TimeLabel(text: String, modifier: Modifier) {
     Text(
-        text, modifier = modifier.width(80.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 20.sp,
-        color = TimeText.copy(alpha = 0.8f),
+        text, modifier = modifier.width(80.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 18.sp,
+        color = TimeText.copy(alpha = 0.6f),
         style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "lnum, tnum"),
     )
 }
 
-/** One row of 24 hour dots: 8 × 8, #000000 at 10%, space-between across the width with 8dp padding. */
+/** One row of 24 hour dots: 8 × 8, #000000 at 10% (or the hour's colour once active), space-between, inset 28dp so the first/last dot centres sit 32dp in. */
 @Composable
-private fun HourDots(y: Dp) {
+private fun HourDots(y: Dp, active: Set<Int>) {
     Row(
-        Modifier.offset(y = y).fillMaxWidth().padding(horizontal = 8.dp),
+        Modifier.offset(y = y).fillMaxWidth().padding(horizontal = 28.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        repeat(24) { Box(Modifier.size(8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.1f))) }
+        // An hour this person was active in today takes that hour's colour from the time-of-day grid.
+        repeat(24) { h ->
+            val c = if (h in active) dotColorC(h + 0.5f) else Color.Black.copy(alpha = 0.1f)
+            Box(Modifier.size(8.dp).clip(CircleShape).background(c))
+        }
     }
 }
 

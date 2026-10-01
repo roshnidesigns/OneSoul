@@ -17,25 +17,28 @@ val PaperBase = Color(0xFFF3EFE7)
 
 /**
  * A handmade-paper structure generated as vectors, in canvas units (1 = one starting screen),
- * covering [from]..[to] in both directions. Because it's drawn in canvas space it scales and pans
+ * covering [x0]..[x1] × [y0]..[y1]. Because it's drawn in canvas space it scales and pans
  * with the scribbles, so zooming out visibly shrinks the paper too. Seeded, so it's the same every time.
  *  - fibres: short curved hairs, a few longer ones
  *  - flecks: tiny dark specks
  *  - a faint dot grid every 1/9 of the screen width, echoing the hour dots
  */
-fun Modifier.paperStructure(from: Float, to: Float, seed: Int = 7): Modifier = drawWithCache {
+fun Modifier.paperStructure(x0: Float, x1: Float, y0: Float, y1: Float, seed: Int = 7): Modifier = drawWithCache {
     val rnd = Random(seed)
     val w = size.width
     val h = size.height
-    val span = to - from
-    val screens = span * span
+    val spanX = x1 - x0
+    val spanY = y1 - y0
+    val screens = spanX * spanY
+    fun rx() = (x0 + rnd.nextFloat() * spanX) * w
+    fun ry() = (y0 + rnd.nextFloat() * spanY) * h
     val dp = density
 
     val fibres = Path()
     val longFibres = Path()
-    repeat((90 * screens).toInt()) { i ->
-        val x = (from + rnd.nextFloat() * span) * w
-        val y = (from + rnd.nextFloat() * span) * h
+    repeat((70 * screens).toInt()) { i ->
+        val x = rx()
+        val y = ry()
         val long = i % 9 == 0
         val len = (if (long) 18f + rnd.nextFloat() * 26f else 4f + rnd.nextFloat() * 12f) * dp
         val a = rnd.nextFloat() * 6.2832f
@@ -48,19 +51,15 @@ fun Modifier.paperStructure(from: Float, to: Float, seed: Int = 7): Modifier = d
         p.moveTo(x, y); p.quadraticTo(cx, cy, ex, ey)
     }
 
-    val flecks = List((260 * screens).toInt()) {
-        Offset((from + rnd.nextFloat() * span) * w, (from + rnd.nextFloat() * span) * h)
-    }
-    val bigFlecks = List((40 * screens).toInt()) {
-        Offset((from + rnd.nextFloat() * span) * w, (from + rnd.nextFloat() * span) * h)
-    }
+    val flecks = List((180 * screens).toInt()) { Offset(rx(), ry()) }
+    val bigFlecks = List((30 * screens).toInt()) { Offset(rx(), ry()) }
 
     val step = w / 9f
     val grid = buildList {
-        var gy = from * h
-        while (gy <= to * h) {
-            var gx = from * w
-            while (gx <= to * w) { add(Offset(gx, gy)); gx += step }
+        var gy = y0 * h
+        while (gy <= y1 * h) {
+            var gx = x0 * w
+            while (gx <= x1 * w) { add(Offset(gx, gy)); gx += step }
             gy += step
         }
     }

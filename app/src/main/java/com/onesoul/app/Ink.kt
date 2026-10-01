@@ -25,7 +25,7 @@ private const val FRAY_DP = 2f
 
 /**
  * Ballpoint on handmade paper, as in the references: the line is a translucent wash of ink with
- * darker fibre-shaped deposits caught across it — short streaks at random angles, clumps, and
+ * fibre-shaped deposits (same colour, denser) caught across it — short streaks at random angles, clumps, and
  * fragments that fray past the edges. Each stroke's texture comes from its own random [seed]
  * (chosen as the finger lands), so no two strokes look alike, but every segment is seeded on its
  * own so ink already laid never changes: it imprints as you draw and stays exactly the same after.
@@ -58,7 +58,8 @@ fun DrawScope.drawInk(pts: List<Float>, color: Color, upTo: Int, width: Float, s
     val geo = if (live) buildInk(pts, n, size, width, density, seed)
     else InkCache.get(pts, size to Triple(n, width, seed)) { buildInk(pts, n, size, width, density, seed) }
 
-    val deep = lerp(color, Color.Black, 0.28f)   // where ink pools in the fibres
+    // Fibres stay in the ink's own colour — no darker deposits.
+    val deep = color
     val d = density
     drawPath(geo.wash, color.copy(alpha = color.alpha * 0.55f), style = Stroke(width * 0.9f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     drawPath(geo.fibresLight, color.copy(alpha = color.alpha * 0.55f), style = Stroke(0.5f * d, cap = StrokeCap.Round))
