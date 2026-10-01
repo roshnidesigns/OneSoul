@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.text.drawText
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
@@ -61,7 +63,7 @@ private const val MARGIN_BOTTOM = 1.0f
  * Strokes are stored in today's "screen units" (0..1 is the sheet you first see), so they stay put.
  */
 @Composable
-fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
+fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long, onReveal: (Float) -> Unit = {}) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val current = remember { mutableStateListOf<Float>() }
@@ -98,6 +100,37 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
     val minScale = (1f / maxOf(x1 - x0, y1 - y0)).coerceAtMost(0.5f)
     // Other days appear as you zoom out: hidden at 100%, fully there at 33% (300% out).
     val reveal = ((1f - scale) / (1f - 1f / 3f)).coerceIn(0f, 1f).let { it * it * (3 - 2 * it) }
+    androidx.compose.runtime.SideEffect { onReveal(reveal) }
+
+    // --- the music corner, right next to the month (one "zoomed-out screen" wide) ------------------
+    val frameScreens = 1f / minScale            // the Figma 360×800 frame = one screen at full zoom-out
+    val mx0 = x1                                // music frame left/top, in screen units
+    val my0 = y0
+    val xEnd = x1 + frameScreens                // the canvas now reaches past the month to the player
+    val vinyl = remember { Vinyl() }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val vinylAudio = remember { VinylAudio(ctx.applicationContext) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vinylAudio.release() } }
+    // Volume knob drives the music.
+    androidx.compose.runtime.LaunchedEffect(vinyl.volume) { vinylAudio.volume = vinyl.volume }
+    val shownRecords = vinyl.pos.indices.map { i ->
+        val target = vinyl.pos[i]
+        val anim by androidx.compose.animation.core.animateOffsetAsState(target,
+            androidx.compose.animation.core.spring(0.75f, 380f), label = "rec$i")
+        if (vinyl.dragging == i) target else anim
+    }
+    val shownRadii = vinyl.pos.indices.map { i ->
+        val r by androidx.compose.animation.core.animateFloatAsState(vinyl.radius(i), label = "recR$i")
+        r
+    }
+    val armPos by androidx.compose.animation.core.animateFloatAsState(
+        if (vinyl.playing != null && vinyl.dragging != vinyl.playing) 1f else 0f,
+        androidx.compose.animation.core.tween(700), label = "arm")
+    val spinT = androidx.compose.animation.core.rememberInfiniteTransition(label = "spin")
+    val spin = spinT.animateFloat(0f, 360f,
+        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1800,
+            easing = androidx.compose.animation.core.LinearEasing)), label = "spinA")
+    val titles = androidx.compose.ui.text.rememberTextMeasurer()
 
     val todayMine = byDay[today].orEmpty().filter { it.author == Author.ME }
     // Keep shaking: after 1s of constant shaking your strokes start dropping, one every ~140ms.
@@ -135,7 +168,7 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
         Modifier
             .fillMaxSize()
             .onSizeChanged { viewSize = it }
-            .pointerInput(minScale, x0, x1, y0, y1) {
+            .pointerInput(minScale, x0, xEnd, y0, y1) {
                 val w = size.width.toFloat()
                 val h = size.height.toFloat()
                 // Keep the month on screen: centre it on an axis where it's smaller than the screen.
@@ -144,7 +177,11 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                     return if (span <= view) (view - (lo + hi) * view * s) / 2
                     else o.coerceIn(view - hi * view * s, -lo * view * s)
                 }
-                fun clamp(o: Offset, s: Float) = Offset(clampAxis(o.x, s, x0, x1, w), clampAxis(o.y, s, y0, y1, h))
+                fun clamp(o: Offset, s: Float) = Offset(clampAxis(o.x, s, x0, xEnd, w), clampAxis(o.y, s, y0, y1, h))
+                // Canvas px per frame dp, and the music frame's top-left in canvas px.
+                val k = frameScreens * w / 360f
+                val mo = Offset(mx0 * w, my0 * h)
+                fun frameDp(p: Offset) = ((p - offset) / scale - mo) / k
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     // Collection mode (other days showing): no scribbling — one finger just moves around.
@@ -155,6 +192,15 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                     strokeSeed = kotlin.random.Random.nextInt()
                     var inked = 0f // canvas px of line laid in this stroke, for the ink running out
                     var lastT = down.uptimeMillis
+                    // In the collection: a finger on a record grabs it, on the knob turns it; else it pans.
+                    val grabbed = if (collecting) vinyl.hitRecord(frameDp(down.position)) else null
+                    val turning = collecting && grabbed == null && vinyl.hitKnob(frameDp(down.position))
+                    if (grabbed != null) {
+                        vinyl.dragging = grabbed; down.consume()
+                        vinylAudio.pickUp()
+                        // Lifting the playing record off stops the music straight away.
+                        if (vinyl.playing == grabbed) vinylAudio.stop()
+                    }
                     do {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.count { it.pressed }
@@ -169,7 +215,11 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                             event.changes.forEach { it.consume() }
                         } else if (pressed == 1 && !transforming && collecting) {
                             val c = event.changes.first { it.pressed }
-                            offset = clamp(offset + c.positionChange(), scale)
+                            when {
+                                grabbed != null -> vinyl.drag(grabbed, c.positionChange() / scale / k)
+                                turning -> vinyl.turnKnob(frameDp(c.position))
+                                else -> offset = clamp(offset + c.positionChange(), scale)
+                            }
                             c.consume()
                         } else if (pressed == 1 && !transforming) {
                             val c = event.changes.first { it.pressed }
@@ -191,6 +241,15 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                         }
                     } while (event.changes.any { it.pressed })
                     sound.speed = 0f
+                    if (grabbed != null) {
+                        val wasPlaying = vinyl.playing
+                        if (transforming) vinyl.dragging = null else vinyl.drop(grabbed)
+                        if (vinyl.playing == grabbed) {
+                            // Settled on the platter: thunk, then needle crackle, then the song.
+                            vinylAudio.settle()
+                            vinylAudio.play(grabbed)
+                        } else if (wasPlaying == grabbed) vinylAudio.stop()
+                    }
                     if (!transforming && !collecting && current.size >= 4) vm.addStroke(current.toList(), strokeSeed)
                     current.clear()
                 }
@@ -205,14 +264,6 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                 SquiggleInk(Modifier.padding(top = 4.dp).size(102.dp, 46.dp).rotate(6.844f))
             }
         }
-        // "days together": the collection's header — fixed on screen, fading in as the month appears.
-        if (reveal > 0.01f) {
-            Text(
-                "days together", fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 24.sp,
-                color = Color(0xFF222222).copy(alpha = 0.4f * reveal),
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 104.dp),
-            )
-        }
         // Everything in here lives in canvas space and moves/zooms together.
         Box(
             Modifier.fillMaxSize().graphicsLayer {
@@ -222,9 +273,23 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
             },
         ) {
             // Vector paper across the whole month, so the page itself visibly zooms and pans.
-            Box(Modifier.fillMaxSize().paperStructure(x0, x1, y0, y1))
+            Box(Modifier.fillMaxSize().paperStructure(x0, xEnd, y0, y1))
             Canvas(Modifier.fillMaxSize()) {
                 val sw = size.width; val sh = size.height
+                // Titles and the music corner live on the canvas too, sized for the zoomed-out view.
+                if (reveal > 0.01f) {
+                    val k = frameScreens * sw / 360f
+                    val titleStyle = androidx.compose.ui.text.TextStyle(fontFamily = Cormorant,
+                        fontWeight = FontWeight.Medium, fontSize = (24f * frameScreens).sp)
+                    fun title(text: String, centreX: Float, a: Float) {
+                        val m = titles.measure(text, titleStyle)
+                        drawText(m, color = Color(0xFF222222).copy(alpha = a * reveal),
+                            topLeft = Offset(centreX - m.size.width / 2f, my0 * sh + 100f * k))
+                    }
+                    title("days together", (x0 + x1) / 2f * sw, 0.4f)
+                    title("some music?", mx0 * sw + 180f * k, 0.6f)
+                    drawVinyl(vinyl, Offset(mx0 * sw, my0 * sh), k, shownRecords, shownRadii, armPos, reveal, layer = 0)
+                }
                 // Other days' scribbles, each on its own sheet, fading in with the zoom.
                 if (reveal > 0.01f) {
                     for ((date, list) in byDay) {
@@ -254,6 +319,28 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                     }
                 }
                 drawStroke(current, myColor, seed = strokeSeed)
+            }
+            if (reveal > 0.01f) {
+                // The playing record on its own layer: only the layer rotates each frame, nothing redraws.
+                val pi = vinyl.playing
+                if (pi != null && vinyl.dragging != pi) {
+                    Canvas(Modifier.fillMaxSize().graphicsLayer {
+                        val kk = frameScreens * size.width / 360f
+                        val cx = mx0 * size.width + shownRecords[pi].x * kk
+                        val cy = my0 * size.height + shownRecords[pi].y * kk
+                        transformOrigin = TransformOrigin(cx / size.width, cy / size.height)
+                        rotationZ = spin.value
+                    }) {
+                        val kk = frameScreens * size.width / 360f
+                        val c = Offset(mx0 * size.width + shownRecords[pi].x * kk, my0 * size.height + shownRecords[pi].y * kk)
+                        drawRecord(c, shownRadii[pi] * kk, vinyl.labels[pi], reveal, 0f)
+                    }
+                }
+                // Tonearm and knob above the record.
+                Canvas(Modifier.fillMaxSize()) {
+                    val kk = frameScreens * size.width / 360f
+                    drawVinyl(vinyl, Offset(mx0 * size.width, my0 * size.height), kk, shownRecords, shownRadii, armPos, reveal, layer = 1)
+                }
             }
             // Date numbers above each sheet; sized for reading when zoomed out.
             if (reveal > 0.01f) {

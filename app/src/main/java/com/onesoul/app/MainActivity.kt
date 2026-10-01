@@ -31,9 +31,19 @@ import kotlinx.coroutines.delay
 enum class Screen { Home, Canvas, Wraps, Days }
 
 class MainActivity : ComponentActivity() {
+    /** Whenever the app comes to the front, set the phone's media volume to 80%. */
+    override fun onResume() {
+        super.onResume()
+        val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        runCatching { am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, Math.round(max * 0.8f), 0) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Hardware volume keys control media in this app.
+        volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(primary = Teal, secondary = Coral, tertiary = Sun),

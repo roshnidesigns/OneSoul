@@ -110,6 +110,8 @@ fun HomeScreen(
 
     var showSnippet by remember { mutableStateOf(false) }
     var showDemo by remember { mutableStateOf(false) }
+    // How far into the zoomed-out collection we are (0 = today's page, 1 = the month).
+    var collect by remember { mutableFloatStateOf(0f) }
     val current = remember { mutableStateListOf<Float>() }
 
     BoxWithConstraints(
@@ -123,8 +125,9 @@ fun HomeScreen(
         val w = maxWidth
         val h = maxHeight
         // Frame 7317: 24 hour dots, 8 × 8, spread edge to edge with 8dp side padding; rows centred 44dp in.
-        val topRow = 44.dp
-        val bottomRow = h - 44.dp
+        // Zoomed out: both tracks slide 12dp towards the screen edges.
+        val topRow = 44.dp - 12.dp * collect
+        val bottomRow = h - 44.dp + 12.dp * collect
         // Track inset so a dot at either end still has room for its time label centred on it.
         val first = 32.dp
         val span = w - 64.dp
@@ -135,8 +138,11 @@ fun HomeScreen(
         // Each person's sky: a large disc set off from their dot, filled with an angled fade
         // (colour on the dot's side → clear), as in the Figma frame. Not clipped, so it runs under the bars.
         Canvas(Modifier.fillMaxSize()) {
-            sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor, towardsBottom = true)
-            sky(Offset(myX.toPx(), bottomRow.toPx()), myColor, towardsBottom = false)
+            // No gradients in the collection: the skies fade out as you zoom out.
+            if (collect < 0.99f) {
+                sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor.copy(alpha = 1f - collect), towardsBottom = true)
+                sky(Offset(myX.toPx(), bottomRow.toPx()), myColor.copy(alpha = 1f - collect), towardsBottom = false)
+            }
             if (strength > 0f) drawRect(Brush.radialGradient(
                 listOf(bpmColor(bpm).copy(alpha = strength * (0.2f + 0.3f * pulse)), Color.Transparent),
                 radius = size.maxDimension * (0.45f + 0.1f * pulse),
@@ -144,7 +150,7 @@ fun HomeScreen(
         }
 
         // The shared scribble space: the whole month on one canvas behind the fixed time tracks (see ScribbleSpace).
-        ScribbleSpace(vm, myColor, now)
+        ScribbleSpace(vm, myColor, now, onReveal = { collect = it })
 
         // Hour dots sit at the back of the time track: above the sky, beneath the person dots and labels.
         HourDots(topRow - 4.dp, vm.activeHours(Author.PARTNER, p.partnerTz, now))
