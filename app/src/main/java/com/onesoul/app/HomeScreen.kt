@@ -124,6 +124,8 @@ fun HomeScreen(
             .background(Color.White)
             // Plain paper colour underneath; the paper's fibres are vectors in the canvas (PaperStructure)
             .background(Color(0xFFFEFEFE)) // the white table under the paper sheets
+            // …with a very faint stone/paper texture on it
+            .paint(painterResource(R.drawable.table_texture), contentScale = ContentScale.Crop, alpha = TABLE_TEXTURE_ALPHA)
             .safeDrawingPadding(),
     ) {
         val w = maxWidth
@@ -188,6 +190,20 @@ fun HomeScreen(
  * smoothly from 133dp to its right (dot at 00:00) to 133dp to its left (dot at 24:00), so the
  * glow always opens into the screen. The angled fade starts just behind the dot and clears past the centre.
  */
+/** Opacity of the background table texture. */
+private const val TABLE_TEXTURE_ALPHA = 0.2f
+
+/**
+ * Stops for an eased fade of [color] from full to transparent between 0 and [end]: alpha follows a
+ * smootherstep curve (flat at both ends), sampled finely so there are no bands or hard edges.
+ */
+private fun smoothFade(color: Color, end: Float, steps: Int = 16): Array<Pair<Float, Color>> =
+    Array(steps + 1) { i ->
+        val t = i / steps.toFloat()
+        val e = 1f - t * t * t * (t * (t * 6f - 15f) + 10f) // smootherstep, 1 → 0
+        (t * end) to color.copy(alpha = color.alpha * e)
+    }
+
 private fun DrawScope.sky(dot: Offset, color: Color, towardsBottom: Boolean, blend: BlendMode = BlendMode.SrcOver) {
     val r = size.width * 1.5f
     val f = (dot.x / size.width).coerceIn(0f, 1f)
@@ -195,8 +211,10 @@ private fun DrawScope.sky(dot: Offset, color: Color, towardsBottom: Boolean, ble
     val dir = c - dot
     drawCircle(
         Brush.linearGradient(
-            // Linear, stop 0% = dot colour at 100% opacity, stop 80% = #FFFFFF at 0% (clear beyond).
-            0f to color, 0.8f to Color.White.copy(alpha = 0f),
+            // From the dot colour at 100% to clear by 80% of the way — eased (not linear) so the fade has
+            // no visible edge: many stops along a smooth curve, fading through the colour itself
+            // (not through white, which greys it out).
+            *smoothFade(color, end = 0.8f),
             start = dot - dir * 0.6f,
             end = c + dir * 0.3f,
         ),
