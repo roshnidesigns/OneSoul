@@ -40,6 +40,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (profile != null) {
             presence.add(Presence(Author.ME, now()))
+            fillMonthWithSamples()
             closeFinishedDays()
             save()
         }
@@ -62,6 +63,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         profile = Profile(me.city, them.city, them.tz, code, me.tz)
         presence.add(Presence(Author.ME, now()))
         save()
+        fillMonthWithSamples()
     }
 
     fun unpair() {
@@ -77,6 +79,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val t = now()
         strokes.add(Stroke(Author.ME, dotColor(hourOf(t, myTz)), pts, t, myTz, seed))
         save()
+    }
+
+    /**
+     * For now: put a few placeholder sketches on every other day of this month that has none,
+     * so the month view looks lived-in. They're marked as samples and can be removed from the demo menu.
+     */
+    fun fillMonthWithSamples() {
+        val zone = ZoneId.of(myTz)
+        val today = java.time.LocalDate.now(zone)
+        val month = java.time.YearMonth.from(today)
+        // Samples left over on days that should stay empty (from an older fill) go away.
+        var added = strokes.removeAll { it.sample &&
+            java.time.Instant.ofEpochMilli(it.t).atZone(zone).toLocalDate().let { d -> java.time.YearMonth.from(d) == month && d.dayOfMonth in KEEP_EMPTY } }
+        val used = strokes.map { java.time.Instant.ofEpochMilli(it.t).atZone(zone).toLocalDate() }.toSet()
+        for (d in 1..month.lengthOfMonth()) {
+            val date = month.atDay(d)
+            if (date == today || date in used || d in KEEP_EMPTY) continue
+            val r = Random(date.toEpochDay().toInt() * 7919)
+            repeat(1 + r.nextInt(4)) {
+                val hour = r.nextInt(24)
+                val t = date.atTime(hour, r.nextInt(60)).atZone(zone).toInstant().toEpochMilli()
+                val who = if (r.nextBoolean()) Author.ME else Author.PARTNER
+                strokes.add(Stroke(who, dotColor(hour + 0.5f), sampleShape(r), t, myTz, r.nextInt(), sample = true))
+            }
+            added = true
+        }
+        if (added) save()
+    }
+
+    fun removeSamples() {
+        if (strokes.removeAll { it.sample }) save()
+    }
+
+    /** A hand-drawn-looking doodle: spiral, wave, loop, heart, zigzag or flower, in screen units. */
+    private fun sampleShape(r: Random): List<Float> {
+        val cx = 0.25f + r.nextFloat() * 0.5f
+        val cy = 0.3f + r.nextFloat() * 0.4f
+        val s = 0.08f + r.nextFloat() * 0.12f
+        val aspect = 0.45f // screen units are taller than wide; keep shapes round-ish
+        val pts = ArrayList<Float>()
+        fun add(x: Float, y: Float) {
+            // a little hand wobble
+            pts += cx + x * s + (r.nextFloat() - 0.5f) * 0.004f
+            pts += cy + y * s * aspect + (r.nextFloat() - 0.5f) * 0.003f
+        }
+        val n = 70
+        when (r.nextInt(6)) {
+            0 -> for (i in 0..n) { val a = i / n.toFloat() * 12.5f; val rr = 0.15f + i / n.toFloat(); add(kotlin.math.cos(a) * rr, kotlin.math.sin(a) * rr) }
+            1 -> for (i in 0..n) { val x = -1.5f + 3f * i / n; add(x, kotlin.math.sin(x * 4f) * 0.45f) }
+            2 -> for (i in 0..n) { val a = i / n.toFloat() * 18.85f; add(-1.4f + 2.8f * i / n + kotlin.math.cos(a) * 0.35f, kotlin.math.sin(a) * 0.5f) }
+            3 -> for (i in 0..n) { val a = i / n.toFloat() * 6.283f; val x = 16 * kotlin.math.sin(a).let { it * it * it }; val y = -(13 * kotlin.math.cos(a) - 5 * kotlin.math.cos(2 * a) - 2 * kotlin.math.cos(3 * a) - kotlin.math.cos(4 * a)); add(x / 16f, y / 16f) }
+            4 -> for (i in 0..12) { add(-1.4f + 2.8f * i / 12, if (i % 2 == 0) -0.5f else 0.5f) }
+            else -> for (i in 0..n) { val a = i / n.toFloat() * 6.283f; val rr = 0.4f + 0.6f * kotlin.math.abs(kotlin.math.sin(a * 2.5f)); add(kotlin.math.cos(a) * rr, kotlin.math.sin(a) * rr) }
+        }
+        return pts
     }
 
     /** Shaken off the page: gone from today's sheet and the month view. */
@@ -235,6 +292,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** Dates the sample fill leaves blank, so the month still has room to scribble. */
+        val KEEP_EMPTY = setOf(2, 3, 4, 9, 17, 26)
         const val FADE_MS = 4 * 60 * 60 * 1000L
     }
 }

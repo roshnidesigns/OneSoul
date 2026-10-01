@@ -46,12 +46,14 @@ import kotlinx.coroutines.launch
 private const val MAX_SCALE = 1f // never larger than the size the scribbles were drawn at
 /** Gap between day sheets, in screens. */
 private const val GAP = 0.18f
-private const val COLUMNS = 5
-/** Margin of paper around the month, in screens. */
+private const val COLUMNS = 6
+/** Margin of paper around the month, in screens (more on top for the header and the time tracks). */
 private const val MARGIN = 0.4f
+private const val MARGIN_TOP = 2.3f
+private const val MARGIN_BOTTOM = 1.0f
 
 /**
- * One big canvas holding the whole month. Every date is its own sheet, laid out five to a row like
+ * One big canvas holding the whole month. Every date is its own sheet, laid out six to a row like
  * the days-together grid; today's sheet is the one you start on and draw into. One finger draws;
  * two fingers pan and zoom (down to the whole month, never past 100%). As you zoom out, the other
  * days' scribbles fade in around today's — fully there by 33% (300% out). Once zoomed out it's a
@@ -89,8 +91,8 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
     )
     val x0 = -tCol * (1 + GAP) - MARGIN
     val x1 = (COLUMNS - 1 - tCol) * (1 + GAP) + 1 + MARGIN
-    val y0 = -tRow * (1 + GAP) - MARGIN
-    val y1 = (rows - 1 - tRow) * (1 + GAP) + 1 + MARGIN
+    val y0 = -tRow * (1 + GAP) - MARGIN_TOP
+    val y1 = (rows - 1 - tRow) * (1 + GAP) + 1 + MARGIN_BOTTOM
     val byDay = vm.strokes.groupBy { java.time.Instant.ofEpochMilli(it.t).atZone(zone).toLocalDate() }
     // Smallest zoom: the whole month fits the screen.
     val minScale = (1f / maxOf(x1 - x0, y1 - y0)).coerceAtMost(0.5f)
@@ -200,9 +202,16 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("leave a scribble", fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 20.sp,
                     color = Color(0xFF222222).copy(alpha = 0.4f))
-                SvgIcon(SQUIGGLE, 110, 41, Color(0xFF452E30).copy(alpha = 0.3f), 3f,
-                    Modifier.padding(top = 4.dp).size(102.dp, 46.dp).rotate(6.844f))
+                SquiggleInk(Modifier.padding(top = 4.dp).size(102.dp, 46.dp).rotate(6.844f))
             }
+        }
+        // "days together": the collection's header — fixed on screen, fading in as the month appears.
+        if (reveal > 0.01f) {
+            Text(
+                "days together", fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 24.sp,
+                color = Color(0xFF222222).copy(alpha = 0.4f * reveal),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 104.dp),
+            )
         }
         // Everything in here lives in canvas space and moves/zooms together.
         Box(
@@ -251,15 +260,34 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long) {
                 for (d in 1..days) {
                     val o = sheet(d)
                     Text(
-                        "$d", fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 72.sp,
-                        color = Color(0xFF222222).copy(alpha = 0.35f * reveal),
+                        // Same colour as the home page's time text (#222F36 at 60%), bigger so it reads zoomed out.
+                        "$d", fontFamily = Cormorant, fontWeight = FontWeight.Medium, fontSize = 120.sp,
+                        color = TimeText.copy(alpha = 0.6f * reveal),
                         modifier = Modifier.offset {
                             androidx.compose.ui.unit.IntOffset((o.x * viewSize.width + 24.dp.toPx()).toInt(),
-                                (o.y * viewSize.height - 100.dp.toPx()).toInt())
+                                (o.y * viewSize.height - 160.dp.toPx()).toInt())
                         },
                     )
                 }
             }
         }
+    }
+}
+
+/** The "leave a scribble" squiggle, drawn in the same textured ink as real scribbles (and never dry). */
+@Composable
+private fun SquiggleInk(modifier: Modifier) {
+    // Sample the Figma path (viewBox 110 × 41) into normalised points once.
+    val pts = remember {
+        val path = androidx.compose.ui.graphics.vector.PathParser().parsePathString(SQUIGGLE).toPath()
+        val m = androidx.compose.ui.graphics.PathMeasure().apply { setPath(path, false) }
+        val n = 140
+        (0..n).flatMap { i ->
+            val p = m.getPosition(m.length * i / n)
+            listOf(p.x / 110f, p.y / 41f)
+        }
+    }
+    Canvas(modifier) {
+        drawInk(pts, Color(0xFF452E30).copy(alpha = 0.3f), pts.size / 2, 3.dp.toPx(), seed = 4242, neverDry = true)
     }
 }

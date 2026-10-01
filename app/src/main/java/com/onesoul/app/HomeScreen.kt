@@ -352,6 +352,8 @@ private fun DemoDialog(vm: AppViewModel, onDismiss: () -> Unit, onSnippet: () ->
                     "$name scribbles" to vm::simulateScribble,
                     "$name opens the app now" to vm::simulateHere,
                     "Close today (make a wrap)" to vm::closeTodayForDemo,
+                    "Fill the month with sample sketches" to vm::fillMonthWithSamples,
+                    "Remove sample sketches" to vm::removeSamples,
                     "Reset everything" to vm::unpair,
                 ).forEach { (label, action) ->
                     Text(label, fontSize = 15.sp, modifier = Modifier.fillMaxWidth()

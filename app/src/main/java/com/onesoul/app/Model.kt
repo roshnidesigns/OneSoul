@@ -27,6 +27,8 @@ data class Stroke(
     val tz: String,
     /** Random per stroke, picked when drawing starts: makes its ink texture unique but stable. */
     val seed: Int = 0,
+    /** Placeholder sketch added to fill the month for now; removable from the demo menu. */
+    val sample: Boolean = false,
 )
 
 data class SongEvent(
@@ -101,7 +103,7 @@ object Codec {
                 .put("tz", it.partnerTz).put("code", it.pairCode).put("mtz", it.myTz))
         }
         put("strokes", JSONArray(s.strokes.map {
-            JSONObject().put("a", it.author.name).put("c", it.color).put("t", it.t).put("tz", it.tz).put("sd", it.seed)
+            JSONObject().put("a", it.author.name).put("c", it.color).put("t", it.t).put("tz", it.tz).put("sd", it.seed).put("sm", it.sample)
                 .put("p", JSONArray(it.pts.map { f -> f.toDouble() }))
         }))
         put("songs", JSONArray(s.songs.map {
@@ -130,7 +132,7 @@ object Codec {
             strokes = o.getJSONArray("strokes").map { s ->
                 val p = s.getJSONArray("p")
                 Stroke(Author.valueOf(s.getString("a")), s.getLong("c"),
-                    (0 until p.length()).map { p.getDouble(it).toFloat() }, s.getLong("t"), s.getString("tz"), s.optInt("sd", 0))
+                    (0 until p.length()).map { p.getDouble(it).toFloat() }, s.getLong("t"), s.getString("tz"), s.optInt("sd", 0), s.optBoolean("sm", false))
             },
             songs = o.getJSONArray("songs").map {
                 SongEvent(Author.valueOf(it.getString("a")), it.getString("ti"), it.getString("ar"), it.getLong("t"))

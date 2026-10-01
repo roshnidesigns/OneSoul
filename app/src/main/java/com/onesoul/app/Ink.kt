@@ -50,17 +50,18 @@ private object InkCache {
     }
 }
 
-fun DrawScope.drawInk(pts: List<Float>, color: Color, upTo: Int, width: Float, seed: Int) {
+fun DrawScope.drawInk(pts: List<Float>, color: Color, upTo: Int, width: Float, seed: Int, neverDry: Boolean = false) {
     val n = upTo.coerceAtMost(pts.size / 2)
     if (n < 1) return
     // The stroke being drawn changes every frame (a live SnapshotStateList); only cache finished ones.
     val live = pts is androidx.compose.runtime.snapshots.SnapshotStateList<*>
-    val geo = if (live) buildInk(pts, n, size, width, density, seed)
-    else InkCache.get(pts, size to Triple(n, width, seed)) { buildInk(pts, n, size, width, density, seed) }
+    val geo = if (live) buildInk(pts, n, size, width, density, seed, neverDry)
+    else InkCache.get(pts, size to Triple(n, width, seed)) { buildInk(pts, n, size, width, density, seed, neverDry) }
 
     // Fibres stay in the ink's own colour — no darker deposits.
     val deep = color
-    val d = density
+    // Fibres scale with the line: a thin line (thumbnails, the prompt squiggle) gets finer grain.
+    val d = density * (width / (6f * density)).coerceIn(0.35f, 1f)
     drawPath(geo.wash, color.copy(alpha = color.alpha * 0.55f), style = Stroke(width * 0.9f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     drawPath(geo.fibresLight, color.copy(alpha = color.alpha * 0.55f), style = Stroke(0.5f * d, cap = StrokeCap.Round))
     drawPath(geo.fibresMid, color, style = Stroke(0.9f * d, cap = StrokeCap.Round))
@@ -68,14 +69,15 @@ fun DrawScope.drawInk(pts: List<Float>, color: Color, upTo: Int, width: Float, s
     drawPoints(geo.specks, PointMode.Points, deep, strokeWidth = 1.1f * d, cap = StrokeCap.Round)
 }
 
-private fun buildInk(pts: List<Float>, n: Int, size: Size, width: Float, density: Float, strokeSeed: Int): InkGeometry {
+private fun buildInk(pts: List<Float>, n: Int, size: Size, width: Float, density: Float, strokeSeed: Int, neverDry: Boolean): InkGeometry {
     // Older strokes (saved before seeds existed) fall back to a seed from where they start.
     val base = if (strokeSeed != 0) strokeSeed else (pts[0] * 100_000).toInt() * 31 + (pts[1] * 100_000).toInt()
-    val total = INK_LENGTH * size.width
+    val total = if (neverDry) Float.MAX_VALUE else INK_LENGTH * size.width
     val wetUntil = total * WET_SHARE
-    val fray = FRAY_DP * density
+    val k = (width / (6f * density)).coerceIn(0.35f, 1f) // texture scale for thinner lines
+    val fray = FRAY_DP * density * k
     val half = width / 2
-    val step = 1.4f * density
+    val step = 1.4f * density * k
 
     val wash = Path()
     val dark = Path(); val mid = Path(); val light = Path()
@@ -119,13 +121,13 @@ private fun buildInk(pts: List<Float>, n: Int, size: Size, width: Float, density
             if (ink > 0f) {
                 // Ink catches unevenly: some steps are heavy, some almost bare.
                 val pressure = 0.35f + rnd.nextFloat() * 0.65f
-                val count = (3.5f * ink * pressure * (width / (6f * density)) + rnd.nextFloat()).toInt()
+                val count = (3.5f * ink * pressure * (width / (6f * density * k)) + rnd.nextFloat()).toInt()
                 repeat(count) {
                     // Spread across the width, sometimes fraying a little past the edge.
                     val across = (rnd.nextFloat() * 2f - 1f) * (half + fray * rnd.nextFloat() * if (rnd.nextFloat() < 0.25f) 1f else 0.2f)
                     val cx = x - dy * across + (rnd.nextFloat() - 0.5f) * fray
                     val cy = y + dx * across + (rnd.nextFloat() - 0.5f) * fray
-                    val len = (1.2f + rnd.nextFloat() * rnd.nextFloat() * 5f) * density
+                    val len = (1.2f + rnd.nextFloat() * rnd.nextFloat() * 5f) * density * k
                     val r = rnd.nextFloat()
                     when {
                         r < 0.18f * ink -> fibre(dark, rnd, cx, cy, dx, dy, len)
