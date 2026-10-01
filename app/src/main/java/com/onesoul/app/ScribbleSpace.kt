@@ -59,7 +59,17 @@ private const val MARGIN = 0.4f
 private const val MARGIN_TOP = 2.3f
 /** Extra paper-free table on the far left, so the month doesn't hug the screen edge. */
 private const val MARGIN_LEFT = 1.3f
-private const val MARGIN_BOTTOM = 1.0f
+/** Equal side margin (left of the month, right of the player), in screens. */
+private const val SIDE = 0.8f
+/** Space between the month and the record player, in screens. */
+private const val BETWEEN = 2.4f
+/** Extra open table on every side, as a multiple of the month+player area. */
+private const val ROOM = 1.0f
+/** Max share of the screen that may be empty table when you pan to an edge or corner. */
+private const val OVERHANG = 0.3f
+/** Width of the music corner, in screens (≈ two day pages). */
+private const val MUSIC_W = 4.5f
+private const val MARGIN_BOTTOM = 1.2f
 
 /**
  * One big canvas holding the whole month. Every date is its own sheet, laid out six to a row like
@@ -110,15 +120,24 @@ fun ScribbleSpace(
     val gridRight = (COLUMNS - 1 - tCol) * (1 + GAP) + 1
     val gridTop = -tRow * (1 + GAP)
     val gridBottom = (rows - 1 - tRow) * (1 + GAP) + 1
-    val padX = (gridRight - gridLeft) / 2f
-    val padY = (gridBottom - gridTop) / 2f
-    val x0 = gridLeft - padX
-    val x1 = gridRight + padX
-    val y0 = gridTop - padY
-    val y1 = gridBottom + padY
+    // Same breathing room on the left of the month and on the right of the player; just enough above
+    // for the title + time track and below for the bottom track.
+    val musicW = MUSIC_W
+    // What the furthest zoom-out frames: the month and the player, with a little air.
+    val cx0 = gridLeft - SIDE
+    val cx1 = gridRight + BETWEEN + musicW + SIDE
+    val cy0 = gridTop - MARGIN_TOP
+    val cy1 = gridBottom + MARGIN_BOTTOM
+    // The table itself is much bigger: lots of open space all round to wander into.
+    val roomX = (cx1 - cx0) * ROOM
+    val roomY = (cy1 - cy0) * ROOM
+    val x0 = cx0 - roomX
+    val x1 = cx1 + roomX
+    val y0 = cy0 - roomY
+    val y1 = cy1 + roomY
     val byDay = vm.strokes.groupBy { java.time.Instant.ofEpochMilli(it.t).atZone(zone).toLocalDate() }
     // Smallest zoom: the whole month fits the screen.
-    val minScale = (1f / maxOf(x1 - x0, y1 - y0)).coerceAtMost(0.5f)
+    val minScale = (1f / maxOf(cx1 - cx0, cy1 - cy0)).coerceAtMost(0.5f) // month + player fit the screen
     // Other days appear as you zoom out: hidden at 100%, fully there at 33% (300% out).
     val reveal = ((1f - scale) / (1f - 1f / 3f)).coerceIn(0f, 1f).let { it * it * (3 - 2 * it) }
     androidx.compose.runtime.SideEffect { onReveal(reveal) }
@@ -126,14 +145,14 @@ fun ScribbleSpace(
     // --- the music corner, right next to the month (one "zoomed-out screen" wide) ------------------
     val frameScreens = 1f / minScale            // the Figma 360×800 frame = one screen at full zoom-out
     val aspect = if (viewSize.height > 0) viewSize.width.toFloat() / viewSize.height else 0.45f
-    val mx0 = gridRight + MARGIN                // music frame sits just right of the month
+    val mx0 = gridRight + BETWEEN               // music corner, a good stretch to the right of the month
     // Titles sit just above the grid; my0 is where a 360-wide frame's top would be for that.
     val my0 = gridTop - 170f * frameScreens * aspect / 360f
     // The player is drawn at half the size of a zoomed-out screen, so it sits in scale with the day
     // pages; its "some music?" title stays level with "days together".
-    val musicScreens = frameScreens * 0.33f // keeps the player in scale with the (now smaller) day pages
+    val musicScreens = musicW // about two pages wide: in scale with the day pages
     val my0m = my0 + 150f * (frameScreens - musicScreens) / 360f * aspect
-    val xEnd = maxOf(x1, mx0 + musicScreens + MARGIN)
+    val xEnd = x1
     val vinyl = remember { Vinyl() }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val vinylAudio = remember { VinylAudio(ctx.applicationContext) }
@@ -218,7 +237,7 @@ fun ScribbleSpace(
         Modifier
             .fillMaxSize()
             .onSizeChanged { viewSize = it }
-            .pointerInput(minScale, x0, xEnd, y0, y1) {
+            .pointerInput(minScale, x0, xEnd, y0, y1, cx0, cx1, cy0, cy1) {
                 val w = size.width.toFloat()
                 val h = size.height.toFloat()
                 // Keep the month on screen: centre it on an axis where it's smaller than the screen.
@@ -227,7 +246,15 @@ fun ScribbleSpace(
                     return if (span <= view) (view - (lo + hi) * view * s) / 2
                     else o.coerceIn(view - hi * view * s, -lo * view * s)
                 }
-                fun clamp(o: Offset, s: Float) = Offset(clampAxis(o.x, s, x0, xEnd, w), clampAxis(o.y, s, y0, y1, h))
+                // You can wander past the content into open table, but never so far that it all leaves the
+                // screen: at most 30% of the view can be empty table on any side.
+                fun clamp(o: Offset, s: Float): Offset {
+                    val over = OVERHANG / s
+                    return Offset(
+                        clampAxis(o.x, s, maxOf(x0, cx0 - over), minOf(xEnd, cx1 + over), w),
+                        clampAxis(o.y, s, maxOf(y0, cy0 - over), minOf(y1, cy1 + over), h),
+                    )
+                }
                 // Canvas px per frame dp, and the music frame's top-left in canvas px.
                 val k = musicScreens * w / 360f
                 val mo = Offset(mx0 * w, my0m * h)
