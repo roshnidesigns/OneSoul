@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.paint
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -113,6 +114,8 @@ fun HomeScreen(
     var showDemo by remember { mutableStateOf(false) }
     // How far into the zoomed-out collection we are (0 = today's page, 1 = the month).
     var collect by remember { mutableFloatStateOf(0f) }
+    // How far the big volume dial has popped up from the bottom (0..1).
+    var dial by remember { mutableFloatStateOf(0f) }
     val current = remember { mutableStateListOf<Float>() }
 
     BoxWithConstraints(
@@ -120,15 +123,15 @@ fun HomeScreen(
             .fillMaxSize()
             .background(Color.White)
             // Plain paper colour underneath; the paper's fibres are vectors in the canvas (PaperStructure)
-            .background(PaperBase)
+            .background(Color(0xFFFEFEFE)) // the white table under the paper sheets
             .safeDrawingPadding(),
     ) {
         val w = maxWidth
         val h = maxHeight
         // Frame 7317: 24 hour dots, 8 × 8, spread edge to edge with 8dp side padding; rows centred 44dp in.
-        // Zoomed out: both tracks slide 12dp towards the screen edges.
-        val topRow = 44.dp - 12.dp * collect
-        val bottomRow = h - 44.dp + 12.dp * collect
+        // Zoomed out: both tracks slide 24dp towards the screen edges.
+        val topRow = 44.dp - 24.dp * collect
+        val bottomRow = h - 44.dp + 24.dp * collect
         // Track inset so a dot at either end still has room for its time label centred on it.
         val first = 32.dp
         val span = w - 64.dp
@@ -138,32 +141,34 @@ fun HomeScreen(
 
         // Each person's sky: a large disc set off from their dot, filled with an angled fade
         // (colour on the dot's side → clear), as in the Figma frame. Not clipped, so it runs under the bars.
-        Canvas(Modifier.fillMaxSize()) {
-            // No gradients in the collection: the skies fade out as you zoom out.
-            if (collect < 0.99f) {
-                sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor.copy(alpha = 1f - collect), towardsBottom = true)
-                sky(Offset(myX.toPx(), bottomRow.toPx()), myColor.copy(alpha = 1f - collect), towardsBottom = false)
-            }
+        val skies: @Composable () -> Unit = { Canvas(Modifier.fillMaxSize()) {
+            // The skies stay with you in the collection too.
+            sky(Offset(partnerX.toPx(), topRow.toPx()), partnerColor, towardsBottom = true)
+            sky(Offset(myX.toPx(), bottomRow.toPx()), myColor, towardsBottom = false)
             if (strength > 0f) drawRect(Brush.radialGradient(
                 listOf(bpmColor(bpm).copy(alpha = strength * (0.2f + 0.3f * pulse)), Color.Transparent),
                 radius = size.maxDimension * (0.45f + 0.1f * pulse),
             ))
-        }
+        } }
 
         // The shared scribble space: the whole month on one canvas behind the fixed time tracks (see ScribbleSpace).
-        ScribbleSpace(vm, myColor, now, onReveal = { collect = it })
+        ScribbleSpace(vm, myColor, now, onReveal = { collect = it }, onDial = { dial = it }, underInk = skies)
 
         // Hour dots sit at the back of the time track: above the sky, beneath the person dots and labels.
-        HourDots(topRow - 4.dp, vm.activeHours(Author.PARTNER, p.partnerTz, now))
-        HourDots(bottomRow - 4.dp, vm.activeHours(Author.ME, vm.myTz, now))
+        HourDots(topRow - 4.dp, vm.activeHours(Author.PARTNER, p.partnerTz, now), hideNear = partnerX)
+        // Your track steps aside (fades) while the big volume dial is up at the bottom.
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - dial }) {
+            HourDots(bottomRow - 4.dp, vm.activeHours(Author.ME, vm.myTz, now), hideNear = myX)
+            DayDot(myX - 16.dp, bottomRow - 16.dp, skyBodyColor(myHour), together, pulse, moonness(myHour))
+            TimeLabel(clock(now, vm.myTz), Modifier.offset(x = myX - 40.dp, y = bottomRow - 48.dp))
+            }
 
         // Group 33 (them, top) and Group 32 (you, bottom): 32dp glowing dots that travel the 24 hours
-        DayDot(partnerX - 16.dp, topRow - 16.dp, partnerColor, together, pulse)
-        DayDot(myX - 16.dp, bottomRow - 16.dp, myColor, together, pulse)
+        // The sun and moon take their natural colours (the skies keep the grid's hour colours).
+        DayDot(partnerX - 16.dp, topRow - 16.dp, skyBodyColor(partnerHour), together, pulse, moonness(partnerHour))
 
         // Each person's local time, centred on their dot: under the top dot, over the bottom one.
         TimeLabel(clock(now, p.partnerTz), Modifier.offset(x = partnerX - 40.dp, y = topRow + 24.dp))
-        TimeLabel(clock(now, vm.myTz), Modifier.offset(x = myX - 40.dp, y = bottomRow - 48.dp))
 
         // Hidden demo menu: long-press just under the bottom track (no visible label).
         Box(
@@ -190,8 +195,8 @@ private fun DrawScope.sky(dot: Offset, color: Color, towardsBottom: Boolean, ble
     val dir = c - dot
     drawCircle(
         Brush.linearGradient(
-            // Linear, stop 0% = dot colour at 80% opacity, stop 80% = #FFFFFF at 0% (clear beyond).
-            0f to color.copy(alpha = 0.8f), 0.8f to Color.White.copy(alpha = 0f),
+            // Linear, stop 0% = dot colour at 100% opacity, stop 80% = #FFFFFF at 0% (clear beyond).
+            0f to color, 0.8f to Color.White.copy(alpha = 0f),
             start = dot - dir * 0.6f,
             end = c + dir * 0.3f,
         ),
@@ -223,29 +228,97 @@ private fun TimeLabel(text: String, modifier: Modifier) {
 
 /** One row of 24 hour dots: 8 × 8, #000000 at 10% (or the hour's colour once active), space-between, inset 28dp so the first/last dot centres sit 32dp in. */
 @Composable
-private fun HourDots(y: Dp, active: Set<Int>) {
-    Row(
-        Modifier.offset(y = y).fillMaxWidth().padding(horizontal = 28.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        // An hour this person was active in today takes that hour's colour from the time-of-day grid.
-        repeat(24) { h ->
-            val c = if (h in active) dotColorC(h + 0.5f) else Color.Black.copy(alpha = 0.1f)
-            Box(Modifier.size(8.dp).clip(CircleShape).background(c))
+private fun HourDots(y: Dp, active: Set<Int>, hideNear: Dp) {
+    BoxWithConstraints(Modifier.offset(y = y).fillMaxWidth()) {
+        val w = maxWidth
+        Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            repeat(24) { h ->
+                val c = if (h in active) dotColorC(h + 0.5f) else Color.Black.copy(alpha = 0.1f)
+                // Hour dots under the person's sun/moon are hidden, so none peeks through the crescent.
+                val cx = 32.dp + (w - 64.dp) * (h / 23f)
+                val hidden = kotlin.math.abs((cx - hideNear).value) < 17f
+                Box(Modifier.size(8.dp).clip(CircleShape).background(if (hidden) Color.Transparent else c))
+            }
         }
     }
 }
 
+/**
+ * Natural colour of the sun/moon at a local hour: a peach sunrise, yellow day sun, orange sunset,
+ * and a white moon at night — blending through the dawn/dusk changeovers.
+ */
+fun skyBodyColor(hour: Float): Color {
+    val sunrise = Color(0xFFFDC492); val noon = Color(0xFFFFD990); val sunset = Color(0xFFE4631D)
+    val moonWhite = Color(0xFFFFFFFF)
+    fun mix(a: Color, b: Color, t: Float) = androidx.compose.ui.graphics.lerp(a, b, t.coerceIn(0f, 1f))
+    val sun = when {
+        hour < 9f -> mix(sunrise, noon, (hour - 6f) / 3f)
+        hour < 16f -> noon
+        else -> mix(noon, sunset, (hour - 16f) / 3f)
+    }
+    return mix(sun, moonWhite, moonness(hour))
+}
+
+/**
+ * Sun → moon by local hour: 0 = full sun (07–17), 1 = crescent moon (20–05), easing between
+ * them at dusk (17–20) and dawn (05–07).
+ */
+fun moonness(hour: Float): Float {
+    fun ease(t: Float) = t.coerceIn(0f, 1f).let { it * it * (3 - 2 * it) }
+    return when {
+        hour < 5f -> 1f
+        hour < 7f -> 1f - ease((hour - 5f) / 2f)
+        hour < 17f -> 0f
+        hour < 20f -> ease((hour - 17f) / 3f)
+        else -> 1f
+    }
+}
+
+/**
+ * A person's 32dp dot as a sun or moon. It stays a round dot: by day it has faint rays, by night
+ * subtle craters and shading appear (fading in through dusk, out at dawn).
+ * A blurred copy of the same shape is the glow (Gaussian σ 6, as in Figma Group 32/33).
+ */
 @Composable
-private fun DayDot(x: Dp, y: Dp, color: Color, ring: Boolean, pulse: Float) {
+private fun DayDot(x: Dp, y: Dp, color: Color, ring: Boolean, pulse: Float, moon: Float) {
     Box(Modifier.offset(x = x, y = y)) {
         if (ring) {
             Box(Modifier.offset((-6).dp - (4 * pulse).dp, (-6).dp - (4 * pulse).dp)
                 .size(44.dp + (8 * pulse).dp).border(2.dp, color.copy(alpha = 0.6f), CircleShape))
         }
-        // Group 32/33: the dot plus a blurred copy of itself (Gaussian σ 6) as a glow
-        Box(Modifier.size(32.dp).blur(12.dp, BlurredEdgeTreatment.Unbounded).clip(CircleShape).background(color))
-        Box(Modifier.size(32.dp).clip(CircleShape).background(color))
+        // Always a round dot; the moon gets a few soft craters as night comes.
+        val shape: DrawScope.(Color) -> Unit = { c -> drawCircle(c, size.minDimension / 2) }
+        val craters: DrawScope.() -> Unit = {
+            if (moon > 0.02f) {
+                val r = size.minDimension / 2
+                val shade = Color(0xFF8E8A94).copy(alpha = 0.22f * moon)
+                for ((x, y, cr) in listOf(Triple(-0.32f, -0.28f, 0.22f), Triple(0.28f, 0.10f, 0.16f),
+                    Triple(-0.05f, 0.40f, 0.12f), Triple(0.36f, -0.36f, 0.09f), Triple(-0.42f, 0.18f, 0.08f))) {
+                    drawCircle(shade, cr * r, center + Offset(x * r, y * r))
+                }
+                // a gentle shading on one side so it reads as a sphere
+                drawCircle(Brush.radialGradient(listOf(Color.Transparent, Color(0xFF8E8A94).copy(alpha = 0.16f * moon)),
+                    center + Offset(-0.25f * r, -0.25f * r), r * 1.25f), r)
+            }
+        }
+        // glow
+        Canvas(Modifier.size(32.dp).blur(12.dp, BlurredEdgeTreatment.Unbounded)) { shape(color) }
+        Canvas(Modifier.size(32.dp)) {
+            // faint sun rays, fading out as it turns to moon
+            if (moon < 0.6f) {
+                val a = (1f - moon / 0.6f) * 0.55f
+                val r0 = size.minDimension * 0.66f; val r1 = size.minDimension * 0.8f
+                for (k in 0 until 8) {
+                    val t = k * Math.PI / 4
+                    drawLine(color.copy(alpha = a),
+                        center + Offset((kotlin.math.cos(t) * r0).toFloat(), (kotlin.math.sin(t) * r0).toFloat()),
+                        center + Offset((kotlin.math.cos(t) * r1).toFloat(), (kotlin.math.sin(t) * r1).toFloat()),
+                        1.6.dp.toPx(), StrokeCap.Round)
+                }
+            }
+            shape(color)
+            craters()
+        }
     }
 }
 

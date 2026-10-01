@@ -54,6 +54,10 @@ class Vinyl {
 
     fun drag(i: Int, by: Offset) { pos[i] = pos[i] + by }
 
+    /** A record is being held over the platter while a different one is already playing. */
+    fun blockedOver(i: Int) = playing != null && playing != i &&
+        hypot(pos[i].x - platter.x, pos[i].y - platter.y) < 72f
+
     /**
      * Let go of a record. On an empty platter it plays; anywhere else it rests where it was dropped.
      * If another record is already playing, this one doesn't go on — it slides back to its place.
@@ -74,14 +78,17 @@ class Vinyl {
     }
 
     /** Turn the knob towards the finger: the indicator sweeps −150°…−30° (left to right over the top). */
-    fun turnKnob(p: Offset) {
-        val a = Math.toDegrees(atan2((p.y - knob.y).toDouble(), (p.x - knob.x).toDouble())).toFloat()
+    /** Turn towards the finger; the dial snaps to its 7 ticks. Returns the tick index it sits on. */
+    fun turnKnob(p: Offset, centre: Offset = knob): Int {
+        val a = Math.toDegrees(atan2((p.y - centre.y).toDouble(), (p.x - centre.x).toDouble())).toFloat()
         val clamped = when {
             a in -150f..-30f -> a
             a > -30f && a < 90f -> -30f
             else -> -150f
         }
-        volume = (clamped + 150f) / 120f
+        val tick = Math.round((clamped + 150f) / 120f * 6f)
+        volume = tick / 6f
+        return tick
     }
 
     companion object {
@@ -189,8 +196,10 @@ fun DrawScope.drawVinyl(
                 drawPath(svg(RECORD_DISC), Color.Black.copy(alpha = 0.16f * alpha))
             }
         }
-        // The spinning record is drawn on its own rotating layer (smooth, no full redraw).
+        // The spinning record is drawn on its own rotating layer (smooth, no full redraw); a record in
+        // hand while another is playing is drawn on top of everything (layer 1).
         if (i == v.playing && v.dragging != i) continue
+        if (i == v.dragging && v.playing != null) continue
         drawRecord(c, r, v.labels[i], alpha, 0f)
     }
     return
@@ -219,23 +228,44 @@ fun DrawScope.drawVinyl(
         }
     }
 
-    // --- volume knob + ticks ------------------------------------------------------------------
-    val kc = p(v.knob.x, v.knob.y)
+    // A second record brought over while one is playing: it sits visibly on top of it (and the arm).
+    val held = v.dragging
+    if (held != null && v.playing != null && held != v.playing) {
+        val c = Offset(o.x + shown[held].x * k, o.y + shown[held].y * k)
+        val r = radii[held] * k
+        val ss = r / 40f
+        withTransform({ translate(c.x - 40f * ss, c.y - 40f * ss + 4f * k); scale(ss, ss, Offset.Zero) }) {
+            drawPath(svg(RECORD_DISC), Color.Black.copy(alpha = 0.22f * alpha))
+        }
+        drawRecord(c, r, v.labels[held], alpha, 0f)
+    }
+
+
+}
+
+/**
+ * The volume knob, drawn on screen (not on the canvas): white dial of radius [r] px with its 7 ticks
+ * (black → grey → orange #E6623F) and an indicator dot at [volume].
+ */
+fun DrawScope.drawVolumeKnob(kc: Offset, r: Float, volume: Float, alpha: Float) {
+    val u = r / Vinyl.KNOB_R
+    val shadow = Color.Black.copy(alpha = 0.10f * alpha)
     val ticks = 7
     for (t in 0 until ticks) {
         val a = Math.toRadians((-150.0 + 120.0 * t / (ticks - 1)))
-        val r0 = (Vinyl.KNOB_R + 12f) * k; val r1 = (Vinyl.KNOB_R + 21f) * k
+        // ticks 40% smaller than before: shorter (9 → 5.4) and thinner (2.4 → 1.44), same inner ring
+        val r0 = (Vinyl.KNOB_R + 12f) * u; val r1 = (Vinyl.KNOB_R + 12f + 5.4f) * u
         val col = when (t) { 0 -> Color(0xFF222222); ticks - 1 -> Color(0xFFE6623F); else -> Color(0xFFABABA9) }
         drawLine(col.copy(alpha = alpha),
             kc + Offset((cos(a) * r0).toFloat(), (sin(a) * r0).toFloat()),
-            kc + Offset((cos(a) * r1).toFloat(), (sin(a) * r1).toFloat()), 2.4f * k, StrokeCap.Round)
+            kc + Offset((cos(a) * r1).toFloat(), (sin(a) * r1).toFloat()), 1.44f * u, StrokeCap.Round)
     }
-    for (s in 1..4) drawCircle(shadow.copy(alpha = shadow.alpha * 1.4f / s), (Vinyl.KNOB_R + 1.5f * s) * k, kc + Offset(0f, (2f + 2f * s) * k))
+    for (s in 1..4) drawCircle(shadow.copy(alpha = shadow.alpha * 1.4f / s), (Vinyl.KNOB_R + 1.5f * s) * u, kc + Offset(0f, (2f + 2f * s) * u))
     drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFD9D8D6)).map { it.copy(alpha = alpha) },
-        kc + Offset(-8f * k, -10f * k), Vinyl.KNOB_R * 1.4f * k), Vinyl.KNOB_R * k, kc)
+        kc + Offset(-8f * u, -10f * u), r * 1.4f), r, kc)
     drawCircle(Brush.radialGradient(listOf(Color(0xFFE4E3E1), Color.White).map { it.copy(alpha = alpha) },
-        kc + Offset(-4f * k, -6f * k), Vinyl.KNOB_R * 0.8f * k), Vinyl.KNOB_R * 0.66f * k, kc)
-    val va = Math.toRadians((-150.0 + 120.0 * v.volume))
-    drawCircle(Color(0xFF8E8D8A).copy(alpha = alpha), 2.6f * k,
-        kc + Offset((cos(va) * Vinyl.KNOB_R * 0.82f * k).toFloat(), (sin(va) * Vinyl.KNOB_R * 0.82f * k).toFloat()))
+        kc + Offset(-4f * u, -6f * u), r * 0.8f), r * 0.66f, kc)
+    val va = Math.toRadians((-150.0 + 120.0 * volume))
+    drawCircle(Color(0xFF8E8D8A).copy(alpha = alpha), 2.6f * u,
+        kc + Offset((cos(va) * r * 0.82f).toFloat(), (sin(va) * r * 0.82f).toFloat()))
 }

@@ -66,6 +66,64 @@ class VinylAudio(private val context: Context) {
         }
     })
 
+    /**
+     * "Can't go there": a harsh, quick back-and-forth scratch (like dragging a needle across a record),
+     * ~0.5s — two rough swipes whose pitch whips up and down, with gritty clicks.
+     */
+    fun reject() = add(object : Voice() {
+        override val length = (rate * 0.5f).toInt()
+        var x1 = 0f; var x2 = 0f; var y1 = 0f; var y2 = 0f
+        override fun sample(n: Random): Float {
+            val p = i.toFloat() / length
+            // two swipes: pitch sweeps 900→3800→900 Hz twice
+            val sw = sin(PI.toFloat() * 2f * p * 2f)
+            val f = 900f + 2900f * (sw * sw)
+            val (b0, a1, a2) = bandpass(f, 2.2f)
+            val x = n.nextFloat() * 2 - 1
+            val y = b0 * x - b0 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            val grit = if (n.nextFloat() < 0.02f) (n.nextFloat() * 2 - 1) * 0.6f else 0f
+            val env = (1 - exp(-p * 40)) * (1f - p) * (0.6f + 0.4f * kotlin.math.abs(sw))
+            return (y * 2.4f + grit) * env
+        }
+    })
+
+    /**
+     * Detent as the volume dial snaps onto a tick: a deep, soft "thock" — a short low tone (~160Hz
+     * dropping a little) with a muffled touch of attack, rather than a bright click. Plus a tiny vibration.
+     */
+    fun tick() {
+        add(object : Voice() {
+            override val length = (rate * 0.07f).toInt()
+            var lp = 0f
+            override fun sample(n: Random): Float {
+                val t = i.toFloat() / rate
+                val body = sin(2 * PI.toFloat() * (150f + 60f * exp(-t * 90f)) * t) * exp(-t * 55f) * 0.95f
+                lp += ((n.nextFloat() * 2 - 1) - lp) * 0.12f        // muffled, low-passed attack
+                val knock = lp * exp(-t * 400f) * 0.6f
+                return (body + knock) * (1 - exp(-t * 3000f))
+            }
+        })
+        vibrateTick()
+    }
+
+    private val vibrator: android.os.Vibrator? = runCatching {
+        if (android.os.Build.VERSION.SDK_INT >= 31)
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager).defaultVibrator
+        else @Suppress("DEPRECATION") (context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator)
+    }.getOrNull()
+
+    /** A small, short buzz in the hand for each detent. */
+    private fun vibrateTick() {
+        val v = vibrator ?: return
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 30 && v.areAllPrimitivesSupported(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK))
+                v.vibrate(android.os.VibrationEffect.startComposition()
+                    .addPrimitive(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.9f).compose())
+            else v.vibrate(android.os.VibrationEffect.createOneShot(14, 140))
+        }
+    }
+
     /** Settling onto the platter: a low thunk (decaying ~90Hz sine) with a crisp click on top. */
     fun settle() = add(object : Voice() {
         override val length = (rate * 0.32f).toInt()

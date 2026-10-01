@@ -24,16 +24,12 @@ fun phaseOf(hour: Float): Phase = when (hour) {
     else -> Evening
 }
 
-/** Dot colours from the Figma "home" grid — one exact colour per 3-hour slot of the person's local day. */
+/** Hour colours: four, one per 6-hour stretch of the person's local day. */
 private val dotSlots = listOf(
-    0xFF452E30, // 00–03
-    0xFF271F2F, // 03–06
-    0xFF008ED9, // 06–09
-    0xFFFDC492, // 09–12
-    0xFFFFD990, // 12–15
-    0xFFC8D3EF, // 15–18
-    0xFFE4631D, // 18–21
-    0xFF855AB4, // 21–24
+    0xFF291F30, // 00–06 night
+    0xFF0091DF, // 06–12 morning
+    0xFFFFA900, // 12–18 afternoon
+    0xFFEB813B, // 18–24 evening
 ).map { Color(it) }
 
 /** "text color for time" from the same grid, used at 60% opacity. */
@@ -42,7 +38,7 @@ val TimeText = Color(0xFF222F36)
 /** The colour of a person's dot at their local hour. */
 fun dotColor(hour: Float): Long = dotColorC(hour).toArgb().toLong() and 0xFFFFFFFFL
 
-fun dotColorC(hour: Float): Color = dotSlots[(hour.toInt() / 3).coerceIn(0, 7)]
+fun dotColorC(hour: Float): Color = dotSlots[(hour.toInt() / 6).coerceIn(0, 3)]
 
 fun colorOf(argb: Long): Color = Color(argb.toInt())
 
