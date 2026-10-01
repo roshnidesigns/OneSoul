@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -164,10 +165,10 @@ fun HomeScreen(
         TimeLabel(clock(now, p.partnerTz), Modifier.offset(x = partnerX - 40.dp, y = topRow + 24.dp))
         TimeLabel(clock(now, vm.myTz), Modifier.offset(x = myX - 40.dp, y = bottomRow - 48.dp))
 
-        Text(
-            "demo", fontSize = 11.sp, color = Ink.copy(alpha = 0.35f),
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp)
-                .clickable { showDemo = true }.padding(6.dp),
+        // Hidden demo menu: long-press just under the bottom track (no visible label).
+        Box(
+            Modifier.align(Alignment.BottomCenter).size(120.dp, 28.dp)
+                .pointerInput(Unit) { detectTapGestures(onLongPress = { showDemo = true }) },
         )
 
     }
@@ -350,16 +351,7 @@ private fun DemoDialog(vm: AppViewModel, onDismiss: () -> Unit, onSnippet: () ->
                 Text("Stand-ins for the other phone until syncing exists.", fontSize = 12.sp, color = Ink.copy(alpha = 0.6f))
                 Spacer(Modifier.height(8.dp))
                 listOf<Pair<String, () -> Unit>>(
-                    "Send $name a snippet" to onSnippet,
-                    "Open day wraps" to onWraps,
-                    "$name plays a song" to { vm.simulateSong() },
-                    "$name plays the same song as you" to { vm.simulateSong(copyMine = true) },
-                    "$name sends a snippet" to vm::simulateSnippet,
-                    "$name scribbles" to vm::simulateScribble,
-                    "$name opens the app now" to vm::simulateHere,
-                    "Close today (make a wrap)" to vm::closeTodayForDemo,
-                    "Fill the month with sample sketches" to vm::fillMonthWithSamples,
-                    "Remove sample sketches" to vm::removeSamples,
+                    "Other person draws something" to vm::simulateScribble,
                     "Reset everything" to vm::unpair,
                 ).forEach { (label, action) ->
                     Text(label, fontSize = 15.sp, modifier = Modifier.fillMaxWidth()

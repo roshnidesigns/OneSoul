@@ -188,7 +188,9 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long, onReveal: (Float)
                     val collecting = scale < 0.97f
                     fun world(p: Offset) = listOf((p.x - offset.x) / scale / w, (p.y - offset.y) / scale / h)
                     var transforming = false
-                    current.clear(); if (!collecting) current.addAll(world(down.position))
+                    // Only today's sheet can be drawn on: ink outside it is ignored.
+                    fun onToday(p: List<Float>) = p[0] in 0f..1f && p[1] in 0f..1f
+                    current.clear(); if (!collecting) world(down.position).takeIf(::onToday)?.let { current.addAll(it) }
                     strokeSeed = kotlin.random.Random.nextInt()
                     var inked = 0f // canvas px of line laid in this stroke, for the ink running out
                     var lastT = down.uptimeMillis
@@ -210,7 +212,9 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long, onReveal: (Float)
                             val centroid = event.calculateCentroid()
                             val pan = event.calculatePan()
                             val next = (scale * zoom).coerceIn(minScale, MAX_SCALE)
-                            offset = clamp(centroid - (centroid - offset) * (next / scale) + pan, next)
+                            // At full size the page is always today's sheet — no drifting onto other dates.
+                            offset = if (next >= MAX_SCALE - 0.001f) Offset.Zero
+                                     else clamp(centroid - (centroid - offset) * (next / scale) + pan, next)
                             scale = next
                             event.changes.forEach { it.consume() }
                         } else if (pressed == 1 && !transforming && collecting) {
@@ -225,7 +229,7 @@ fun ScribbleSpace(vm: AppViewModel, myColor: Color, now: Long, onReveal: (Float)
                             val c = event.changes.first { it.pressed }
                             val moved = c.positionChange()
                             if (moved != Offset.Zero) {
-                                current.addAll(world(c.position)); c.consume()
+                                world(c.position).takeIf(::onToday)?.let { current.addAll(it) }; c.consume()
                                 // Scratch follows finger speed; it thins and crackles as the ink (1.5 widths) runs out.
                                 inked += moved.getDistance() / scale
                                 val total = 1.5f * w
